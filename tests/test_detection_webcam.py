@@ -1,21 +1,32 @@
 import sys, cv2
 sys.path.append(".")
-from src.detection import FaceDetector, draw_faces
+from src.detection import FaceDetector, draw_faces, save_capture, save_face_crops
 
 det = FaceDetector()
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)   # CAP_DSHOW = plus fiable sous Windows
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
 if not cap.isOpened():
-    print("Webcam introuvable. Essaie l'index 1 : cv2.VideoCapture(1, cv2.CAP_DSHOW)")
+    print("Webcam introuvable. Essaie l'index 1.")
     sys.exit(1)
+
+print("s = sauvegarder la capture | v = sauvegarder les visages | q = quitter")
 
 while True:
     ok, frame = cap.read()
     if not ok:
         break
-    draw_faces(frame, det.detect(frame))
-    cv2.imshow("YuNet - q pour quitter", frame)
-    if cv2.waitKey(1) & 0xFF == ord("q"):
+
+    faces = det.detect(frame)
+    display = frame.copy()          # copie pour dessiner dessus
+    draw_faces(display, faces)
+    cv2.imshow("YuNet", display)
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord("s"):
+        print("Capture enregistrée :", save_capture(display))
+    elif key == ord("v"):
+        print("Visages enregistrés :", save_face_crops(frame, faces))
+    elif key == ord("q"):
         break
 
 cap.release()

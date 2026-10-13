@@ -3,6 +3,32 @@ import urllib.request
 
 import cv2
 import numpy as np
+import time  
+
+
+def save_capture(image, folder="captures", prefix="capture"):
+    """Enregistre l'image complète (avec ou sans dessin) dans un dossier."""
+    os.makedirs(folder, exist_ok=True)
+    name = f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
+    path = os.path.join(folder, name)
+    cv2.imwrite(path, image)
+    return path
+
+
+def save_face_crops(image, faces, folder="captures/visages", prefix="visage"):
+    """Enregistre chaque visage détecté, recadré, dans un dossier."""
+    os.makedirs(folder, exist_ok=True)
+    paths = []
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    for i, face in enumerate(faces):
+        x, y, w, h = face["box"]
+        crop = image[y:y + h, x:x + w]
+        if crop.size == 0:
+            continue
+        path = os.path.join(folder, f"{prefix}_{stamp}_{i}.jpg")
+        cv2.imwrite(path, crop)
+        paths.append(path)
+    return paths
 
 MODEL_URL = (
     "https://github.com/opencv/opencv_zoo/raw/main/models/"
