@@ -66,3 +66,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+# pour les images
+.png
+.jpg
+.jpeg
