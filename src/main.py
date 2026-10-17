@@ -29,7 +29,7 @@ def main():
 
     # Chargement de la base de données préparée par Bias (dossier 'dataset/' à côté de 'src/' ou dedans)
     # Ajustez le chemin 'dataset' si celui-ci se trouve à la racine du projet (ex: '../dataset')
-    dataset_path = "../data" 
+    dataset_path = "../data/raw" 
     if not os.path.exists(dataset_path):
         dataset_path = "data" # S'il est directement dans src/
 
