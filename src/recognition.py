@@ -14,7 +14,7 @@ il reçoit simplement ce que detection.py produit.
 Modele requis :  models/face_recognition_sface_2021dec.onnx
 
 """
-
+import itertools
 import os
 import pickle
 
@@ -27,12 +27,12 @@ RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHEMIN_SFACE = os.path.join(RACINE, "models", "face_recognition_sface_2021dec.onnx")
 CHEMIN_BASE = os.path.join(RACINE, "data", "embeddings.pkl")
 
-# ======================================================================
-# 1. OUTILS DE BASE : chargement, empreinte, similarite
-# ======================================================================
 
 # seuil de similarite demande par OpenCV
-SEUIL_SIMILARITE = 0.365
+SEUIL_SIMILARITE = 0.45
+
+# Écart minimal exigé entre le meilleur candidat et le deuxième (si >= 2 personnes).
+MARGE_MIN = 0.08
 
 #Message affiche lorsqu'une personne n'est pas reconnu
 INCONNU = "UNKNOWN"
@@ -42,6 +42,10 @@ le modele sera charge par la fonction ci dessous une seule fois grace a "global"
 ce qui evitera la suppression de la variable a la fin de l'execuction de cette fonction
 """
 _sface = None
+
+# ======================================================================
+# 1. OUTILS DE BASE : chargement, Recuperation des nombres yunet, empreinte, similarite
+# ======================================================================
 
 # FONCTION DE CHARGEMENT DU MODEL
 def _charger_sface():
@@ -53,6 +57,12 @@ def _charger_sface():
         # Le second parametre ("") est un fichier de configuration, inutile ici.
         _sface = cv2.FaceRecognizerSF.create(CHEMIN_SFACE, "")
     return _sface
+
+def _ligne_yunet(donnees):
+    """Retourne les 15 nombres YuNet d'un visage ("raw" de detection.py, ou "ligne")."""
+    if "raw" in donnees:
+        return donnees["raw"]
+    return donnees["ligne"]
     
 def extraire_embedding(image, ligne):
     """
@@ -85,7 +95,7 @@ def _similarite(empreinte_a, empreinte_b):
     return float(np.dot(empreinte_a, empreinte_b))
 
 # ======================================================================
-# 2. ENROLEMENT : construire et sauvegarder la base d'empreintes
+# 2. BASE D'EMPREINTES : charger, sauvegarder, construire, contrôler
 # ======================================================================
 
 def charger_base(chemin_base=CHEMIN_BASE):
@@ -106,33 +116,32 @@ def sauvegarder_base(base, chemin_base=CHEMIN_BASE):
         pickle.dump(base, f)
 
 
-def construire_base(detections, chemin_base=CHEMIN_BASE):
+def construire_base(detections, chemin_base=CHEMIN_BASE, fusionner=False):
     """
-    Calcule les empreintes de toutes les personnes et sauvegarde la base.
+    Calcule les empreintes et sauvegarde la base.
 
-    detections : dictionnaire fourni par detection.charger_detections().
-    La base est RECONSTRUITE entièrement a partir des detections (elle remplace
-    l'ancienne). Retourne {nom: nombre_de_photos_utilisées}.
+    detections : {"alice": [visage, visage, ...], "bob": [...]}
+                 Chaque visage est un dictionnaire avec "raw" (ou "ligne") et
+                 "image" (chemin de la photo, relue ici pour calculer l'empreinte).
+    fusionner  : False -> la base est reconstruite entièrement (remplace l'ancienne).
+                 True  -> on part de la base existante ; seules les personnes
+                          présentes dans `detections` sont remplacées.
+
+    Retourne {nom: nombre_de_photos_utilisées}.
     """
-    base = {}
+    base = charger_base(chemin_base) if fusionner else {}
     resume = {}
 
-    # Etape 1 : on parcourt chaque personne...
     for nom, liste_visages in detections.items():
         empreintes = []
-
-        # Etape 2 : ...et chacune de ses photos.
         for visage in liste_visages:
             chemin_image = visage.get("image")
             image = cv2.imread(chemin_image) if chemin_image else None
-            if image is None:                      # photo deplacee ou illisible
+            if image is None:                      # photo déplacée ou illisible
                 print(f"  [ignorée] image illisible : {chemin_image}")
                 continue
+            empreintes.append(extraire_embedding(image, _ligne_yunet(visage)))
 
-            # Etape 3 : alignement + SFace -> empreinte de 128 nombres.
-            empreintes.append(extraire_embedding(image, visage["ligne"]))
-
-        # Etape 4 : on ne garde que les personnes ayant au moins une empreinte.
         if len(empreintes) > 0:
             base[nom] = empreintes
             resume[nom] = len(empreintes)
@@ -140,20 +149,34 @@ def construire_base(detections, chemin_base=CHEMIN_BASE):
         else:
             print(f"  [ignorée] {nom} : aucune empreinte calculable")
 
-    if len(base) == 0:
+    if len(resume) == 0:
         raise ValueError("Aucune empreinte calculée : la base n'a pas été écrite.")
 
-    # Etape 5 : sauvegarde de la base finale.
     sauvegarder_base(base, chemin_base)
     print(f"Base enregistrée ({len(base)} personne(s)) -> {chemin_base}")
     return resume
+
 
 
 # ======================================================================
 # 3. TEMPS REEL : identification et vérification
 # ======================================================================
 
-def identifier_visage(image, donnees_detection, database, seuil=SEUIL_SIMILARITE):
+def classer_personnes(image, donnees_detection, database):
+    """
+    Compare un visage à chaque personne de la base.
+
+    Retourne la liste [(nom, meilleur_score), ...] triée du plus au moins ressemblant
+    (liste vide si la base est vide). Pour chaque personne, on garde sa MEILLEURE photo.
+    """
+    if len(database) == 0:
+        return []
+    empreinte = extraire_embedding(image, _ligne_yunet(donnees_detection))
+    scores = {nom: max(_similarite(empreinte, ref) for ref in refs)
+              for nom, refs in database.items()}
+    return sorted(scores.items(), key=lambda paire: paire[1], reverse=True)
+
+def identifier_visage(image, donnees_detection, database, seuil=SEUIL_SIMILARITE,  marge=MARGE_MIN):
     """
     Identification 1:N : qui est ce visage parmi les personnes de la base ?
 
@@ -170,23 +193,15 @@ def identifier_visage(image, donnees_detection, database, seuil=SEUIL_SIMILARITE
         statut : le verdict final : le nom de la personne si score >= seuil,
                  sinon "Unknown"
     """
-    # Base vide : personne à comparer.
-    if len(database) == 0:
+    classement = classer_personnes(image, donnees_detection, database)
+    if len(classement) == 0:
         return INCONNU, -1.0, INCONNU
-
-    # Etape 1 : empreinte du visage actuel.
-    empreinte = extraire_embedding(image, donnees_detection["ligne"])
-
-    # Etape 2 : on compare a chaque personne de la base...
-    meilleur_nom, meilleur_score = INCONNU, -1.0
-    for nom, liste_empreintes in database.items():
-        # ...en gardant, pour chaque personne, sa MEILLEURE photo de reference.
-        score = max(_similarite(empreinte, ref) for ref in liste_empreintes)
-        if score > meilleur_score:
-            meilleur_nom, meilleur_score = nom, score
-
-    # Etape 3 : decision finale grece au seuil.
-    statut = meilleur_nom if meilleur_score >= seuil else INCONNU
+    
+    meilleur_nom, meilleur_score = classement[0]
+    second_score = classement[1][1] if len(classement) > 1 else -1.0
+    
+    accepte = meilleur_score >= seuil and (meilleur_score - second_score) >= marge
+    statut = meilleur_nom if accepte else INCONNU
     return meilleur_nom, meilleur_score, statut
 
 
@@ -199,12 +214,8 @@ def verifier_visage(image, donnees_detection, empreinte_reference, seuil=SEUIL_S
 
     Retourne (score, est_la_meme_personne) : un decimal et un booleen.
     """
-    empreinte = extraire_embedding(image, donnees_detection["ligne"])
-
-    # np.atleast_2d permet de passer une seule empreinte ou plusieurs.
+    empreinte = extraire_embedding(image, _ligne_yunet(donnees_detection))
     references = np.atleast_2d(np.asarray(empreinte_reference, dtype=np.float32))
-
-    # Meilleur score parmi les références (chacune est renormalisee par securite).
     score = max(_similarite(empreinte, ref / np.linalg.norm(ref)) for ref in references)
     return score, score >= seuil
 
@@ -216,5 +227,5 @@ def verifier_visage(image, donnees_detection, empreinte_reference, seuil=SEUIL_S
 if __name__ == "__main__":
     base = charger_base()
     print(f"Base actuelle : {list(base.keys()) or 'vide'}")
-    print(f"Seuil de décision : {SEUIL_SIMILARITE}")
+    print(f"Seuil : {SEUIL_SIMILARITE} | marge : {MARGE_MIN}")
     print("Ce module ne détecte pas les visages : lancez main.py pour l'utiliser.")
