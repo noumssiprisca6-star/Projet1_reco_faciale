@@ -152,7 +152,7 @@ def extraire_donnees(dossier, inclure_inconnu=False):
 # 3. ENTRAÎNEMENT DU CLASSIFICATEUR
 # ============================================================
 
-def entrainer_modele(seuil=0.365):
+def entrainer_modele(seuil=0.85):
     """
     Extrait les empreintes des images d'entraînement et entraîne
     le classificateur sur les identités connues.
@@ -180,7 +180,7 @@ def entrainer_modele(seuil=0.365):
         )
 
     # Créer le classificateur avec le seuil choisi.
-    classificateur = FaceClassifier(seuil=seuil)
+    classificateur = FaceClassifier(seuil=0.85)
 
     # Construire les références des différentes personnes.
     classificateur.entrainer(
