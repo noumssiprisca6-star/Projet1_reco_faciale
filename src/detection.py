@@ -57,7 +57,7 @@ class FaceDetector:
             score_threshold, nms_threshold, top_k
         )
 
-    def detect(self, image):
+    def detect(self, image, taille_min=0):
         """
         image : tableau NumPy BGR (lu par cv2.imread ou la webcam).
         Retourne une liste de dictionnaires (vide si aucun visage) :
@@ -83,6 +83,8 @@ class FaceDetector:
             # on garde la boîte à l'intérieur de l'image
             x1, y1 = max(int(x), 0), max(int(y), 0)
             x2, y2 = min(int(x + bw), w), min(int(y + bh), h)
+            if (x2 - x1) < taille_min or (y2 - y1) < taille_min:
+                            continue                      # visage trop petit : on l'ignore
             landmarks = [(int(f[4 + 2 * i]), int(f[5 + 2 * i])) for i in range(5)]
             results.append({
                 "box": (x1, y1, x2 - x1, y2 - y1),
@@ -91,6 +93,12 @@ class FaceDetector:
                 "raw": f,
             })
         return results
+    
+def plus_grand_visage(faces):
+    """Parmi une liste de visages (sortie de detect), retourne le plus grand ; None si vide."""
+    if not faces:
+        return None
+    return max(faces, key=lambda f: f["box"][2] * f["box"][3])
 
 
 def draw_faces(image, faces, color=(0, 255, 0), label=None):
